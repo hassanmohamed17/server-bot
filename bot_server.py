@@ -13,7 +13,7 @@ PENDING_REQUESTS = {}
 # إعدادات اللوج
 logging.basicConfig(level=logging.INFO)
 
-# إنشاء تطبيق Flask وTelegram
+# إنشاء تطبيق Flask و Telegram
 app = Flask(__name__)
 app.bot_app = None
 
@@ -68,13 +68,18 @@ def check_status(ip):
 
 # تشغيل بوت التليجرام
 def run_bot():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    app.bot_app = Application.builder().token(TOKEN).build()
-    app.bot_app.add_handler(CommandHandler("start", start))
-    app.bot_app.add_handler(CallbackQueryHandler(handle_decision))
-    print("✅ Telegram Bot Started...")
-    app.bot_app.run_polling()
+    async def main():
+        app.bot_app = Application.builder().token(TOKEN).build()
+        app.bot_app.add_handler(CommandHandler("start", start))
+        app.bot_app.add_handler(CallbackQueryHandler(handle_decision))
+        print("✅ Telegram Bot Started...")
+
+        # Run polling safely without signal handling (to avoid Railway crash)
+        await app.bot_app.initialize()
+        await app.bot_app.start()
+        await app.bot_app.updater.start_polling()
+    
+    asyncio.run(main())
 
 # بدء الخوادم
 if __name__ == "__main__":

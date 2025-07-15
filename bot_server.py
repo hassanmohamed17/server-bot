@@ -9,75 +9,71 @@ TOKEN = "7618310902:AAFXPN4Vx0nJRbPXeCEiAQXfvjnV-OQYC20"
 AUTHORIZED_CHAT_ID = None
 PENDING_REQUESTS = {}
 
-# إعدادات اللوج
+# إعداد اللوج
 logging.basicConfig(level=logging.INFO)
 
-# إنشاء تطبيق Flask
+# إنشاء تطبيق Flask و Telegram
 app = Flask(__name__)
 
-# بوت التليجرام
-telegram_app = Application.builder().token(TOKEN).build()
-
-# رسالة البداية
+# أوامر البوت
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global AUTHORIZED_CHAT_ID
     AUTHORIZED_CHAT_ID = update.effective_chat.id
     await update.message.reply_text("✅ تم تسجيل هذا الحساب لتلقي إشعارات التشغيل.")
 
-# تنفيذ القرار
 async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    ip, decision = query.data.split(":")
+    data = query.data.split(":")
+    ip, decision = data[0], data[1]
     PENDING_REQUESTS[ip] = decision
     await query.edit_message_text(f"📥 تم اختيار: {decision.upper()} لتشغيل الجهاز {ip}")
 
-# إرسال الإشعار
 async def send_telegram_alert(ip):
-    if AUTHORIZED_CHAT_ID is None:
-        print("❌ لم يتم تسجيل أي مستخدم بعد.")
-        return
     keyboard = [
-        [
-            InlineKeyboardButton("✅ سماح", callback_data=f"{ip}:allowed"),
-            InlineKeyboardButton("❌ رفض", callback_data=f"{ip}:denied"),
-        ]
+        [InlineKeyboardButton("✅ سماح", callback_data=f"{ip}:allowed"),
+         InlineKeyboardButton("❌ رفض", callback_data=f"{ip}:denied")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    try:
-        await telegram_app.bot.send_message(
+    if AUTHORIZED_CHAT_ID:
+        await app.bot_app.bot.send_message(
             chat_id=AUTHORIZED_CHAT_ID,
             text=f"⚠️ محاولة تشغيل جديدة من الجهاز IP: {ip}\nهل تسمح بالتشغيل؟",
-            reply_markup=reply_markup,
+            reply_markup=reply_markup
         )
-    except Exception as e:
-        print(f"❌ فشل إرسال الرسالة إلى Telegram: {e}")
 
-# API: طلب الإذن
+# API: طلب الوصول
 @app.route("/request", methods=["POST"])
 def request_access():
     data = request.get_json()
     ip = data.get("ip")
-    print(f"🚀 طلب تشغيل من IP: {ip}")
+    print(f"🚀 إرسال طلب تشغيل إلى البوت للسماح لـ IP: {ip}")
     PENDING_REQUESTS[ip] = None
-    asyncio.create_task(send_telegram_alert(ip))  # إرسال الطلب عبر تليجرام
+    asyncio.run_coroutine_threadsafe(send_telegram_alert(ip), app.loop)
     return jsonify({"status": "pending"})
 
-# API: التحقق من الإذن
+# API: التحقق من الرد
 @app.route("/check/<ip>", methods=["GET"])
 def check_status(ip):
     decision = PENDING_REQUESTS.get(ip)
     return jsonify({"status": decision or "pending"})
 
-# Main
-if __name__ == "__main__":
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CallbackQueryHandler(handle_decision))
-
-    # تشغيل بوت تليجرام في نفس الـ loop
-    loop = asyncio.get_event_loop()
-    loop.create_task(telegram_app.run_polling(close_loop=False))
+# الدالة الرئيسية
+async def main():
+    app.bot_app = Application.builder().token(TOKEN).build()
+    app.bot_app.add_handler(CommandHandler("start", start))
+    app.bot_app.add_handler(CallbackQueryHandler(handle_decision))
 
     print("✅ Telegram Bot Started...")
+    await app.bot_app.initialize()
+    await app.bot_app.start()
+    await app.bot_app.updater.start_polling()
+
+if __name__ == "__main__":
     print("🌐 Flask API Started...")
-    app.run(host="0.0.0.0", port=8000)
+    # شغّل Flask في Thread عادي
+    import threading
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=8000), daemon=True).start()
+
+    # شغّل بوت تيليجرام في الـ event loop الأساسي
+    asyncio.run(main())
